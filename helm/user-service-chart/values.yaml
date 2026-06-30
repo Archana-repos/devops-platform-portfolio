@@ -6,6 +6,6 @@ liveColor: green
 image:
   repository: archana2026/user-service
   tags:
-    blue: v1
+    blue: v11
     green: v7
 env: []
