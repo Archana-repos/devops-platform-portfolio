@@ -7,5 +7,5 @@ image:
   repository: archana2026/user-service
   tags:
     blue: v1
-    green: v7
+    green: v999-broken
 env: []
