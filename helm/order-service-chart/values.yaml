@@ -6,7 +6,7 @@ liveColor: green
 image:
   repository: archana2026/order-service
   tags:
-    blue: v1
+    blue: v2
     green: v1
 env:
   - name: USER_SERVICE_URL
