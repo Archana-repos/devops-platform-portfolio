@@ -1,0 +1,97 @@
+pipeline {
+    agent {
+        kubernetes {
+            yaml """
+apiVersion: v1
+kind: Pod
+spec:
+  serviceAccountName: jenkins-deployer
+  containers:
+  - name: docker
+    image: docker:24-dind
+    securityContext:
+      privileged: true
+    tty: true
+    command:
+    - cat
+  - name: kubectl
+    image: bitnami/kubectl:latest
+    command:
+    - cat
+    tty: true
+"""
+        }
+    }
+    environment {
+        IMAGE = "archana2026/user-service"
+        TAG = "v${BUILD_NUMBER}"
+        NAMESPACE = "apps"
+    }
+    stages {
+        stage('Checkout') {
+            steps {
+                checkout scm
+            }
+        }
+        stage('Build & Push') {
+            steps {
+                container('docker') {
+                    sh """
+                        docker build -t ${IMAGE}:${TAG} services/user-service
+                        docker push ${IMAGE}:${TAG}
+                    """
+                }
+            }
+        }
+        stage('Detect Idle Color') {
+            steps {
+                container('kubectl') {
+                    script {
+                        def liveColor = sh(
+                            script: "kubectl get svc user-service -n ${NAMESPACE} -o jsonpath='{.spec.selector.color}'",
+                            returnStdout: true
+                        ).trim()
+                        env.LIVE_COLOR = liveColor
+                        env.IDLE_COLOR = (liveColor == "blue") ? "green" : "blue"
+                        echo "Live color: ${env.LIVE_COLOR}, deploying to idle color: ${env.IDLE_COLOR}"
+                    }
+                }
+            }
+        }
+        stage('Deploy to Idle Color') {
+            steps {
+                container('kubectl') {
+                    sh """
+                        kubectl set image deployment/user-service-${IDLE_COLOR} user-service=${IMAGE}:${TAG} -n ${NAMESPACE}
+                        kubectl rollout status deployment/user-service-${IDLE_COLOR} -n ${NAMESPACE} --timeout=120s
+                    """
+                }
+            }
+        }
+        stage('Smoke Test Idle Color') {
+            steps {
+                container('kubectl') {
+                    sh """
+                        kubectl run smoke-test-${BUILD_NUMBER} -n ${NAMESPACE} --rm -i --restart=Never \
+                          --image=curlimages/curl -- curl -sf http://user-service-${IDLE_COLOR}-internal:5000/health
+                    """
+                }
+            }
+        }
+        stage('Cutover Traffic') {
+            steps {
+                container('kubectl') {
+                    sh """
+                        kubectl patch svc user-service -n ${NAMESPACE} -p '{"spec":{"selector":{"app":"user-service","color":"${IDLE_COLOR}"}}}'
+                    """
+                }
+                echo "Traffic cut over from ${LIVE_COLOR} to ${IDLE_COLOR}"
+            }
+        }
+    }
+    post {
+        failure {
+            echo "Pipeline failed — live color (${LIVE_COLOR}) was never touched, zero customer impact."
+        }
+    }
+}
