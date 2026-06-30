@@ -80,6 +80,7 @@ spec:
                         sh """
                             git config --global user.email "jenkins-ci@devops-portfolio.local"
                             git config --global user.name "Jenkins CI"
+                            git config --global --add safe.directory '*'
                             sed -i "s/${IDLE_COLOR}: .*/${IDLE_COLOR}: ${TAG}/" ${VALUES_FILE}
                             git add ${VALUES_FILE}
                             git commit -m "CI: deploy user-service ${TAG} to idle color (${IDLE_COLOR})"
