@@ -11,9 +11,9 @@ spec:
     image: docker:24-dind
     securityContext:
       privileged: true
-    tty: true
-    command:
-    - cat
+    env:
+    - name: DOCKER_TLS_CERTDIR
+      value: ""
   - name: kubectl
     image: bitnami/kubectl:latest
     command:
@@ -22,27 +22,36 @@ spec:
 """
         }
     }
+
     environment {
         IMAGE = "archana2026/user-service"
         TAG = "v${BUILD_NUMBER}"
         NAMESPACE = "apps"
     }
+
     stages {
         stage('Checkout') {
             steps {
                 checkout scm
             }
         }
+
         stage('Build & Push') {
             steps {
                 container('docker') {
                     sh """
+                        for i in \$(seq 1 30); do
+                          docker info >/dev/null 2>&1 && break
+                          echo "Waiting for docker daemon..."
+                          sleep 2
+                        done
                         docker build -t ${IMAGE}:${TAG} services/user-service
                         docker push ${IMAGE}:${TAG}
                     """
                 }
             }
         }
+
         stage('Detect Idle Color') {
             steps {
                 container('kubectl') {
@@ -58,6 +67,7 @@ spec:
                 }
             }
         }
+
         stage('Deploy to Idle Color') {
             steps {
                 container('kubectl') {
@@ -68,6 +78,7 @@ spec:
                 }
             }
         }
+
         stage('Smoke Test Idle Color') {
             steps {
                 container('kubectl') {
@@ -78,6 +89,7 @@ spec:
                 }
             }
         }
+
         stage('Cutover Traffic') {
             steps {
                 container('kubectl') {
@@ -89,9 +101,10 @@ spec:
             }
         }
     }
+
     post {
         failure {
-            echo "Pipeline failed — live color (${LIVE_COLOR}) was never touched, zero customer impact."
+            echo "Pipeline failed — live color (${env.LIVE_COLOR ?: 'not yet determined'}) was never touched, zero customer impact."
         }
     }
 }
