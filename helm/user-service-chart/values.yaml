@@ -2,7 +2,7 @@ name: user-service
 namespace: apps
 replicas: 2
 port: 5000
-liveColor: green
+liveColor: blue
 image:
   repository: archana2026/user-service
   tags:
