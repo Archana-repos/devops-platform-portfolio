@@ -7,25 +7,25 @@ kind: Pod
 spec:
   serviceAccountName: jenkins-deployer
   containers:
-  - name: docker
-    image: docker:24-dind
-    securityContext:
-      privileged: true
-    env:
-    - name: DOCKER_TLS_CERTDIR
-      value: ""
-  - name: kubectl
-    image: bitnami/kubectl:latest
-    command:
-    - cat
-    tty: true
+    - name: docker
+      image: docker:24-dind
+      securityContext:
+        privileged: true
+      env:
+        - name: DOCKER_TLS_CERTDIR
+          value: ""
+    - name: kubectl
+      image: bitnami/kubectl:latest
+      command:
+        - cat
+      tty: true
 """
         }
     }
 
     environment {
-        IMAGE = "archana2026/user-service"
-        TAG = "v${BUILD_NUMBER}"
+        IMAGE     = "archana2026/user-service"
+        TAG       = "v${BUILD_NUMBER}"
         NAMESPACE = "apps"
     }
 
@@ -39,15 +39,22 @@ spec:
         stage('Build & Push') {
             steps {
                 container('docker') {
-                    sh """
-                        for i in \$(seq 1 30); do
-                          docker info >/dev/null 2>&1 && break
-                          echo "Waiting for docker daemon..."
-                          sleep 2
-                        done
-                        docker build -t ${IMAGE}:${TAG} services/user-service
-                        docker push ${IMAGE}:${TAG}
-                    """
+                    withCredentials([usernamePassword(
+                        credentialsId: 'dockerhub-creds',
+                        usernameVariable: 'DOCKER_USER',
+                        passwordVariable: 'DOCKER_PASS'
+                    )]) {
+                        sh """
+                            for i in \$(seq 1 30); do
+                              docker info >/dev/null 2>&1 && break
+                              echo "Waiting for docker daemon..."
+                              sleep 2
+                            done
+                            echo "\$DOCKER_PASS" | docker login -u "\$DOCKER_USER" --password-stdin
+                            docker build -t ${IMAGE}:${TAG} services/user-service
+                            docker push ${IMAGE}:${TAG}
+                        """
+                    }
                 }
             }
         }
