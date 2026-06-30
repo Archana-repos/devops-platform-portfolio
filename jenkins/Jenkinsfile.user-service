@@ -27,6 +27,7 @@ spec:
         IMAGE = "archana2026/user-service"
         TAG = "v${BUILD_NUMBER}"
         NAMESPACE = "apps"
+        VALUES_FILE = "helm/user-service-chart/values.yaml"
     }
 
     stages {
@@ -39,11 +40,7 @@ spec:
         stage('Build & Push') {
             steps {
                 container('docker') {
-                    withCredentials([usernamePassword(
-                        credentialsId: 'dockerhub-creds',
-                        usernameVariable: 'DOCKER_USER',
-                        passwordVariable: 'DOCKER_PASS'
-                    )]) {
+                    withCredentials([usernamePassword(credentialsId: 'dockerhub-creds', usernameVariable: 'DOCKER_USER', passwordVariable: 'DOCKER_PASS')]) {
                         sh """
                             for i in \$(seq 1 30); do
                               docker info >/dev/null 2>&1 && break
@@ -59,28 +56,53 @@ spec:
             }
         }
 
-        stage('Detect Idle Color') {
+        stage('Detect Idle Color from Git') {
             steps {
                 container('kubectl') {
                     script {
+                        // Source of truth is now values.yaml in Git, not the live cluster
                         def liveColor = sh(
-                            script: "kubectl get svc user-service -n ${NAMESPACE} -o jsonpath='{.spec.selector.color}'",
+                            script: "grep 'liveColor:' ${VALUES_FILE} | awk '{print \$2}'",
                             returnStdout: true
                         ).trim()
                         env.LIVE_COLOR = liveColor
                         env.IDLE_COLOR = (liveColor == "blue") ? "green" : "blue"
-                        echo "Live color: ${env.LIVE_COLOR}, deploying to idle color: ${env.IDLE_COLOR}"
+                        echo "Live color (per Git): ${env.LIVE_COLOR}, deploying to idle color: ${env.IDLE_COLOR}"
                     }
                 }
             }
         }
 
-        stage('Deploy to Idle Color') {
+        stage('Update Idle Color Image Tag in Git') {
+            steps {
+                container('kubectl') {
+                    withCredentials([usernamePassword(credentialsId: 'github-creds', usernameVariable: 'GIT_USER', passwordVariable: 'GIT_TOKEN')]) {
+                        sh """
+                            git config --global user.email "jenkins-ci@devops-portfolio.local"
+                            git config --global user.name "Jenkins CI"
+                            sed -i "s/${IDLE_COLOR}: .*/${IDLE_COLOR}: ${TAG}/" ${VALUES_FILE}
+                            git add ${VALUES_FILE}
+                            git commit -m "CI: deploy user-service ${TAG} to idle color (${IDLE_COLOR})"
+                            git push https://\${GIT_USER}:\${GIT_TOKEN}@github.com/Archana-repos/devops-platform-portfolio.git HEAD:main
+                        """
+                    }
+                }
+            }
+        }
+
+        stage('Wait for ArgoCD Sync') {
             steps {
                 container('kubectl') {
                     sh """
-                        kubectl set image deployment/user-service-${IDLE_COLOR} user-service=${IMAGE}:${TAG} -n ${NAMESPACE}
-                        kubectl rollout status deployment/user-service-${IDLE_COLOR} -n ${NAMESPACE} --timeout=120s
+                        for i in \$(seq 1 30); do
+                          SYNC=\$(kubectl get application user-service -n argocd -o jsonpath='{.status.sync.status}')
+                          HEALTH=\$(kubectl get application user-service -n argocd -o jsonpath='{.status.health.status}')
+                          echo "ArgoCD status: sync=\$SYNC health=\$HEALTH"
+                          if [ "\$SYNC" = "Synced" ] && [ "\$HEALTH" = "Healthy" ]; then
+                            break
+                          fi
+                          sleep 10
+                        done
                     """
                 }
             }
@@ -97,14 +119,19 @@ spec:
             }
         }
 
-        stage('Cutover Traffic') {
+        stage('Cutover Traffic via Git') {
             steps {
                 container('kubectl') {
-                    sh """
-                        kubectl patch svc user-service -n ${NAMESPACE} -p '{"spec":{"selector":{"app":"user-service","color":"${IDLE_COLOR}"}}}'
-                    """
+                    withCredentials([usernamePassword(credentialsId: 'github-creds', usernameVariable: 'GIT_USER', passwordVariable: 'GIT_TOKEN')]) {
+                        sh """
+                            sed -i "s/liveColor: .*/liveColor: ${IDLE_COLOR}/" ${VALUES_FILE}
+                            git add ${VALUES_FILE}
+                            git commit -m "CI: cutover user-service traffic from ${LIVE_COLOR} to ${IDLE_COLOR}"
+                            git push https://\${GIT_USER}:\${GIT_TOKEN}@github.com/Archana-repos/devops-platform-portfolio.git HEAD:main
+                        """
+                    }
                 }
-                echo "Traffic cut over from ${LIVE_COLOR} to ${IDLE_COLOR}"
+                echo "Traffic cutover committed: ${LIVE_COLOR} -> ${IDLE_COLOR}. ArgoCD will reconcile the live Service shortly."
             }
         }
     }
