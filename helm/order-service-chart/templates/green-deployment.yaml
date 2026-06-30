@@ -1,0 +1,32 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ .Values.name }}-green
+  namespace: {{ .Values.namespace }}
+  labels:
+    app: {{ .Values.name }}
+    color: green
+spec:
+  replicas: {{ .Values.replicas }}
+  selector:
+    matchLabels:
+      app: {{ .Values.name }}
+      color: green
+  template:
+    metadata:
+      labels:
+        app: {{ .Values.name }}
+        color: green
+    spec:
+      containers:
+      - name: {{ .Values.name }}
+        image: "{{ .Values.image.repository }}:{{ .Values.image.tags.green }}"
+        ports:
+        - containerPort: {{ .Values.port }}
+        {{- if .Values.env }}
+        env:
+        {{- range .Values.env }}
+        - name: {{ .name }}
+          value: {{ .value | quote }}
+        {{- end }}
+        {{- end }}

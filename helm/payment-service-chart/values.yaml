@@ -1,0 +1,13 @@
+name: payment-service
+namespace: apps
+replicas: 2
+port: 5000
+liveColor: green
+image:
+  repository: archana2026/payment-service
+  tags:
+    blue: v1
+    green: v1
+env:
+  - name: ORDER_SERVICE_URL
+    value: "http://order-service:5000"

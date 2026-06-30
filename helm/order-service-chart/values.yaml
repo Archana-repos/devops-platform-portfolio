@@ -1,0 +1,13 @@
+name: order-service
+namespace: apps
+replicas: 2
+port: 5000
+liveColor: green
+image:
+  repository: archana2026/order-service
+  tags:
+    blue: v1
+    green: v1
+env:
+  - name: USER_SERVICE_URL
+    value: "http://user-service:5000"
