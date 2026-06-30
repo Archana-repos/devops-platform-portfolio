@@ -1,0 +1,113 @@
+pipeline {
+    agent {
+        kubernetes {
+            yaml """
+apiVersion: v1
+kind: Pod
+spec:
+  serviceAccountName: jenkins-deployer
+  containers:
+  - name: docker
+    image: docker:24-dind
+    securityContext:
+      privileged: true
+    env:
+    - name: DOCKER_TLS_CERTDIR
+      value: ""
+  - name: kubectl
+    image: alpine/k8s:1.30.2
+    command:
+    - cat
+    tty: true
+"""
+        }
+    }
+
+    environment {
+        IMAGE = "archana2026/payment-service"
+        TAG = "v${BUILD_NUMBER}"
+        NAMESPACE = "apps"
+    }
+
+    stages {
+        stage('Checkout') {
+            steps {
+                checkout scm
+            }
+        }
+
+        stage('Build & Push') {
+            steps {
+                container('docker') {
+                    withCredentials([usernamePassword(credentialsId: 'dockerhub-creds', usernameVariable: 'DOCKER_USER', passwordVariable: 'DOCKER_PASS')]) {
+                        sh """
+                            for i in \$(seq 1 30); do
+                              docker info >/dev/null 2>&1 && break
+                              echo "Waiting for docker daemon..."
+                              sleep 2
+                            done
+                            echo "\$DOCKER_PASS" | docker login -u "\$DOCKER_USER" --password-stdin
+                            docker build -t ${IMAGE}:${TAG} services/payment-service
+                            docker push ${IMAGE}:${TAG}
+                        """
+                    }
+                }
+            }
+        }
+
+        stage('Detect Idle Color') {
+            steps {
+                container('kubectl') {
+                    script {
+                        def liveColor = sh(
+                            script: "kubectl get svc payment-service -n ${NAMESPACE} -o jsonpath='{.spec.selector.color}'",
+                            returnStdout: true
+                        ).trim()
+                        env.LIVE_COLOR = liveColor
+                        env.IDLE_COLOR = (liveColor == "blue") ? "green" : "blue"
+                        echo "Live color: ${env.LIVE_COLOR}, deploying to idle color: ${env.IDLE_COLOR}"
+                    }
+                }
+            }
+        }
+
+        stage('Deploy to Idle Color') {
+            steps {
+                container('kubectl') {
+                    sh """
+                        kubectl set image deployment/payment-service-${IDLE_COLOR} payment-service=${IMAGE}:${TAG} -n ${NAMESPACE}
+                        kubectl rollout status deployment/payment-service-${IDLE_COLOR} -n ${NAMESPACE} --timeout=120s
+                    """
+                }
+            }
+        }
+
+        stage('Smoke Test Idle Color') {
+            steps {
+                container('kubectl') {
+                    sh """
+                        kubectl run smoke-test-${BUILD_NUMBER} -n ${NAMESPACE} --rm -i --restart=Never \
+                          --image=curlimages/curl -- curl -sf http://payment-service-${IDLE_COLOR}-internal:5000/health
+                    """
+                }
+            }
+        }
+
+        stage('Cutover Traffic') {
+            steps {
+                container('kubectl') {
+                    sh """
+                        kubectl patch svc payment-service -n ${NAMESPACE} -p '{"spec":{"selector":{"app":"payment-service","color":"${IDLE_COLOR}"}}}'
+                    """
+                }
+                echo "Traffic cut over from ${LIVE_COLOR} to ${IDLE_COLOR}"
+            }
+        }
+    }
+
+    post {
+        failure {
+            echo "Pipeline failed — live color (${env.LIVE_COLOR ?: 'not yet determined'}) was never touched, zero customer impact."
+        }
+    }
+}
