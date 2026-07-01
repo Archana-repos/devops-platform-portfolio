@@ -3,10 +3,14 @@ kind: Service
 metadata:
   name: {{ .Values.name }}
   namespace: {{ .Values.namespace }}
+  labels:
+    app: {{ .Values.name }}
+    monitored: "true"
 spec:
   selector:
     app: {{ .Values.name }}
     color: {{ .Values.liveColor }}
   ports:
-  - port: {{ .Values.port }}
+  - name: http
+    port: {{ .Values.port }}
     targetPort: {{ .Values.port }}
